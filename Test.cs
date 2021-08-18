@@ -80,7 +80,7 @@ namespace csharp_natural_sort
 
                     while (i1 < m)
                     {
-                        if (s1[i1] != s2[i2]) return (s1[i1] > s2[i2]) ? 1 : 0;
+                        if (s1[i1] != s2[i2]) return (s1[i1] > s2[i2]) ? 1 : -1;
 
                         i1++; i2++;
                     }
