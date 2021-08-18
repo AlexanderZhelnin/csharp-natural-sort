@@ -1,12 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Configs;
-using BenchmarkDotNet.Running;
 
 namespace csharp_natural_sort
 {
@@ -16,6 +11,13 @@ namespace csharp_natural_sort
     {
         const string STR1 = "asrgfsadf12421";
         const string STR2 = "asrgfsadf12321";
+
+        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int StrCmpLogicalW(string s1, string s2);
+
+        [Benchmark(Description = "WinAPI")]
+        public void TestWinAPI() => StrCmpLogicalW(STR1, STR2);
+
 
         [Benchmark(Description = "Old")]
         public void test1Old() => CompareOld(STR1, STR2);
@@ -36,6 +38,14 @@ namespace csharp_natural_sort
         public void testUnsafeIsDigit() => CompareUnsafeIsDigit(STR1, STR2);
 
 
+        [Benchmark(Description = "Regexp")]
+        public void testRegexp() => CompareRegex(STR1, STR2);
+
+        
+        /// <summary>
+        /// Мой самый первый реализованный алгоритм. Тут числа сравниваются как строка, 
+        /// но условиям натуральной сортировки удовлетворяет
+        /// </summary>        
         public static int CompareOld(string s1, string s2)
         {
             (var ne1, var ne2) = (string.IsNullOrEmpty(s1), string.IsNullOrEmpty(s2));
@@ -86,6 +96,9 @@ namespace csharp_natural_sort
             return (i2 == len2) ? 0 : -1;
         }
 
+        /// <summary>
+        /// Сравнение с использованием Span
+        /// </summary>        
         public static int CompareSpan(string s1, string s2)
         {
             (var ne1, var ne2) = (string.IsNullOrEmpty(s1), string.IsNullOrEmpty(s2));
@@ -106,15 +119,15 @@ namespace csharp_natural_sort
             while (i1 < len1)
             {
                 if (i2 == len2) return 1;
-                if (char.IsDigit(s1[i1]) && char.IsDigit(s2[i2]))
+                if (char.IsDigit(span1[i1]) && char.IsDigit(span2[i2]))
                 {
-                    while (i1 < len1 && s1[i1] == '0') i1++;
-                    while (i2 < len2 && s2[i2] == '0') i2++;
+                    while (i1 < len1 && span1[i1] == '0') i1++;
+                    while (i2 < len2 && span2[i2] == '0') i2++;
 
                     (var j1, var j2) = (i1, i2);
 
-                    while (j1 < len1 && char.IsDigit(s1[j1])) j1++;
-                    while (j2 < len2 && char.IsDigit(s2[j2])) j2++;
+                    while (j1 < len1 && char.IsDigit(span1[j1])) j1++;
+                    while (j2 < len2 && char.IsDigit(span2[j2])) j2++;
 
                     (var l1, var l2) = (j1 - i1, j2 - i2);
 
@@ -127,7 +140,7 @@ namespace csharp_natural_sort
                 }
                 else
                 {
-                    if (s1[i1] != s2[i2]) return s1[i1] > s2[i2] ? 1 : -1;
+                    if (span1[i1] != span2[i2]) return span1[i1] > span2[i2] ? 1 : -1;
 
                     i1++; i2++;
                 }
@@ -136,6 +149,9 @@ namespace csharp_natural_sort
             return (i2 == len2) ? 0 : -1;
         }
 
+        /// <summary>
+        /// Алгоритм с преобразованием строкового числа в число
+        /// </summary>        
         public static int CompareNew(string str1, string str2)
         {
             (var ne1, var ne2) = (string.IsNullOrEmpty(str1), string.IsNullOrEmpty(str2));
@@ -173,6 +189,9 @@ namespace csharp_natural_sort
             return (i2 == len2) ? 0 : -1;
         }
 
+        /// <summary>
+        /// более низкоуровневое программирование
+        /// </summary>        
         public unsafe static int CompareUnsafe(string s1, string s2)
         {
             (var ne1, var ne2) = (string.IsNullOrEmpty(s1), string.IsNullOrEmpty(s2));
@@ -221,6 +240,9 @@ namespace csharp_natural_sort
             }
         }
 
+        /// <summary>
+        /// Это Usafe вариант с использованием стандартной функции char.IsDigit
+        /// </summary>        
         public unsafe static int CompareUnsafeIsDigit(string s1, string s2)
         {
             (var ne1, var ne2) = (string.IsNullOrEmpty(s1), string.IsNullOrEmpty(s2));
@@ -270,7 +292,74 @@ namespace csharp_natural_sort
         }
 
 
-      
+        #region Regexp
+        /// <summary>
+        /// Это самый плохой с моей точки зрения вариант
+        /// </summary>
+        private static Dictionary<string, string[]> table = new Dictionary<string, string[]>();
+        private const string RegexString = @"([0-9]+(\.[0-9]+)?([Ee][+-]?[0-9]+)?)";
+        private const StringComparison StrComparison = StringComparison.Ordinal;
+        private static readonly bool isAscending = true;
+        public static int CompareRegex(string x, string y)
+        {
+            if (x == y)
+                return 0;
+
+            string[] x1, y1;
+
+            if (!table.TryGetValue(x, out x1))
+            {
+                x1 = Regex.Split(x.Replace(" ", ""), RegexString);
+                table.Add(x, x1);
+            }
+
+            if (!table.TryGetValue(y, out y1))
+            {
+                y1 = Regex.Split(y.Replace(" ", ""), RegexString);
+                table.Add(y, y1);
+            }
+
+            int returnVal;
+
+            for (int i = 0; i < x1.Length && i < y1.Length; i++)
+            {
+                if (x1[i] != y1[i])
+                {
+                    returnVal = PartCompare(x1[i], y1[i]);
+                    return isAscending ? returnVal : -returnVal;
+                }
+            }
+
+            if (y1.Length > x1.Length)
+            {
+                returnVal = 1;
+            }
+            else if (x1.Length > y1.Length)
+            {
+                returnVal = -1;
+            }
+            else
+            {
+                returnVal = 0;
+            }
+
+            return isAscending ? returnVal : -returnVal;
+        }
+
+        private static int PartCompare(string left, string right)
+        {
+            decimal x, y;
+
+            if (!decimal.TryParse(left, NumberStyles.Any, CultureInfo.InvariantCulture, out x))
+                return String.Compare(left, right, StrComparison);
+
+            if (!decimal.TryParse(right, NumberStyles.Any, CultureInfo.InvariantCulture, out y))
+                return String.Compare(left, right, StrComparison);
+
+            return x.CompareTo(y);
+        } 
+        #endregion
+
 
 
     }
